@@ -17,5 +17,5 @@ urlpatterns = [
     path('start_task',views.Start_Task,name='Start_Task'),
     path('stop_task', views.Stop_Task, name='stop_task'),
     path('task_summary',views.Task_Summary,name="Task_summary"),
-    path('dummy')
+    path('dummy',)
 ]
