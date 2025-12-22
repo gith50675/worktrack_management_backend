@@ -1,7 +1,5 @@
 from datetime import timedelta
-
-from django.contrib.auth.hashers import make_password,check_password
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User, AbstractUser
 from django.utils import timezone
 from django.db import models
 from django.db.models import DateField
@@ -11,20 +9,30 @@ from django.views.decorators.csrf import csrf_exempt
 
 
 # Create your models here.
-class User(models.Model):
-    name = models.CharField(max_length=100)
+class User(AbstractUser):
+    username = models.EmailField(unique=True)
     email = models.EmailField(unique=True)
-    mobile = models.CharField(max_length=15)
-    password = models.CharField(max_length=255)
 
-    def set_password(self, raw_password):
-        self.password = make_password(raw_password)
+    ROLE_CHOICES = (
+        ("admin", "Admin"),
+        ("project_lead", "Project Lead"),
+        ("user", "User"),
+    )
 
-    def check_password(self, raw_password):
-        return check_password(raw_password, self.password)
+    role = models.CharField(
+        max_length=20,
+        choices=ROLE_CHOICES,
+        default="user"
+    )
 
-    def _str_(self):
+    mobile = models.CharField(max_length=15, blank=True, null=True)
+
+    USERNAME_FIELD = "username"
+    REQUIRED_FIELDS = ["email"]
+
+    def __str__(self):
         return self.email
+
 
 class Tasks(models.Model):
     Priority_choices=[('High','High'),('Medium','Medium'),('Low','Low')]

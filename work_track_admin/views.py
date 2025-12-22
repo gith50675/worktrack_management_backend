@@ -1,82 +1,89 @@
-from django.contrib.auth.hashers import check_password,make_password
-from .models import User
-from django.db.models.fields import return_None
+import json
+import time
+
+
+import pyautogui
+import self
+from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import check_password, make_password
 from django.http import JsonResponse
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Tasks, Projects, Task_Time
+from .models import Projects, Task_Time
 from .models import Tasks
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
-import json
-from .models import Tasks
-from django.utils import timezone
+from .models import User
 
-# IDLE_AUTO_STOP_MINUTES = 5
-# Create your views here.
+
+
+from django.contrib.auth import get_user_model
+User = get_user_model()
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def Signup(request):
     try:
-        data = json.loads(request.body.decode('utf-8'))
-        name = data.get('name')
-        email = data.get('email')
-        mobile = data.get('mobile')
-        password = data.get('password')
+        data = json.loads(request.body.decode("utf-8"))
+
+        name = data.get("name")
+        email = data.get("email")
+        mobile = data.get("mobile")
+        password = data.get("password")
 
         if not all([name, email, mobile, password]):
-            return JsonResponse({'error': 'All fields are required'}, status=400)
+            return JsonResponse({"error": "All fields are required"}, status=400)
 
         if User.objects.filter(email=email).exists():
-            return JsonResponse({'error': 'Email already registered'}, status=400)
+            return JsonResponse({"error": "Email already registered"}, status=400)
 
-        user = User(name=name, email=email, mobile=mobile, password=make_password(password))
-        user.save()
+        user = User.objects.create_user(
+            username=email,
+            email=email,
+            password=password,
+            first_name=name,
+            mobile=mobile
+        )
 
-        return JsonResponse({'message': 'User registered successfully'}, status=201)
+        return JsonResponse({"message": "User registered successfully"}, status=201)
+
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        return JsonResponse({"error": str(e)}, status=500)
 
 
+
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
 
 @csrf_exempt
-@api_view(['POST'])
+@api_view(["POST"])
 @permission_classes([AllowAny])
 def Login(request):
-    email = request.data.get('email')
-    password = request.data.get('password')
-    print(email, password)
+    email = request.data.get("email")
+    password = request.data.get("password")
 
-    try:
-        user = User.objects.get(email=email)
-    except User.DoesNotExist:
+    user = authenticate(username=email, password=password)
+    if not user:
         return JsonResponse({"error": "Invalid email or password"}, status=401)
 
-    # check password manually
-    if not check_password(password, user.password):
-        return JsonResponse({"error": "Invalid email or password"}, status=401)
-
-    # Generate JWT tokens
     refresh = RefreshToken.for_user(user)
-    access = str(refresh.access_token)
+    refresh["role"] = user.role
 
     return JsonResponse({
         "message": "Login successful",
-        "access": access,
+        "access": str(refresh.access_token),
         "refresh": str(refresh),
         "user": {
             "id": user.id,
-            "name": user.name,
+            "name": user.first_name,
             "email": user.email,
             "mobile": user.mobile,
+            "role": user.role,
         }
-        },status=200)
+    }, status=200)
 
 
 @csrf_exempt
@@ -111,23 +118,36 @@ def Add_Tasks(request):
             return JsonResponse({'error':f'added field{str(e)}'})
     return JsonResponse({'error':'invalid request method'})
 
+
+
 def View_Tasks(request):
-    if request.method=="GET":
+    if request.method == "GET":
         try:
-            tasks=Tasks.objects.all()
-            task_list=[]
+            tasks = Tasks.objects.all()
+            task_list = []
+
             for i in tasks:
                 task_list.append({
-                    'Task Name':i.Task_Name,
-                    'Priority':i.Priority,
-                    'Due Date':i.Due_Date,
-                    'Staus':i.Status,
-                    'Assigned_by':i.Assigned_By
+                    "id": i.id,
+                    "task_name": i.Task_Name,
+                    "priority": i.Priority,
+                    "due_date": i.Due_Date,
+                    "status": i.Status,
+                    "assigned_by": i.Assigned_By,
+                    "working_hours": i.Working_Hours,
+                    "description": i.Description,
                 })
-            return JsonResponse({'message':'Successfully viewed','id':task_list})
+
+            return JsonResponse({
+                "message": "Successfully viewed",
+                "tasks": task_list
+            }, status=200)
+
         except Exception as e:
-            return JsonResponse({'error':f'view object{str(e)}'})
-    return JsonResponse({'error':'invalid request method'})
+            return JsonResponse({"error": str(e)}, status=500)
+
+    return JsonResponse({"error": "Invalid request method"}, status=405)
+
 
 
 @csrf_exempt
@@ -191,60 +211,79 @@ def Delete_Task(request,id):
 
 @csrf_exempt
 def Add_Projects(request):
-    if request.method=='POST':
-        try:
-            project_Name=request.POST.get('project_name')
-            print(project_Name)
-            company_name=request.POST.get('company_name')
-            description=request.POST.get('description')
-            assigned_to=request.POST.get('assigned_by')
-            due_date=request.POST.get('due_date')
-            est_hour=request.POST.get('est_hr')
-            priority=request.POST.get('priority')
-            links = request.POST.get('links')
-            attachments = request.POST.get('attachments')
-            status = request.POST.get('status')
-            if project_Name and company_name:
-                proj=Projects.objects.create(
-                    Project_Name=project_Name,
-                    Company_Name=company_name,
-                    Description=description,
-                    Assigned_to=assigned_to,
-                    Due_Date=due_date,
-                    Est_Hour=est_hour,
-                    Priority=priority,
-                    Links=links,
-                    Attachments=attachments,
-                    Status=status
-                )
-                return JsonResponse({'message':'Successfully added','id':proj.id})
-        except Exception as e:
-            return JsonResponse({'errror':f'added field{str(e)}'})
-    return JsonResponse({'error':'Invalid request method'})
+    if request.method != "POST":
+        return JsonResponse({'error': 'Invalid request method'}, status=405)
+
+    try:
+        project_name = request.POST.get('project_name')
+        company_name = request.POST.get('company_name')
+        description = request.POST.get('description', '')
+        assigned_name = request.POST.get('assigned_by')   # USER NAME
+        due_date = request.POST.get('due_date') or None
+        est_hour = request.POST.get('est_hr')
+        priority = request.POST.get('priority')
+        links = request.POST.get('links', '')
+        status = request.POST.get('status', 'Pending')
+
+        if not project_name or not company_name or not assigned_name:
+            return JsonResponse({'error': 'Required fields missing'}, status=400)
+
+        project = Projects.objects.create(
+            Project_Name=project_name,
+            Company_Name=company_name,
+            Description=description,
+            Due_Date=due_date,
+            Est_Hour=int(est_hour),
+            Priority=priority,
+            Links=links,
+            Status=status,
+            Active='View'
+        )
+
+
+        user = User.objects.filter(
+            name__iexact=assigned_name  # case-insensitive
+        ).first()
+
+        if not user:
+            return JsonResponse(
+                {'error': f'User "{assigned_name}" not found'},
+                status=404
+            )
+
+
+        project.Assigned_to.add(user)
+
+        return JsonResponse({
+            'message': 'Project added successfully',
+            'project_id': project.id
+        }, status=201)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
 
 def View_Projects(request):
-    if request.method=="GET":
-        try:
-            proj=Projects.objects.all()
-            proj_list=[]
-            for i in proj:
-                proj_list.append({
-                    "Project_Name":i.Project_Name,
-                    "Company_Name":i.Company_Name,
-                    'Description':i.Description,
-                    'Assigned_to':i.Assigned_to,
-                    'Due_Date':i.Due_Date,
-                    'Est_Hour':i.Est_Hour,
-                    'Priority':i.Priority,
-                    'Links':i.Links,
-                    'Attachments':i.Attachments,
-                    'Status':i.Status
-                })
-            return JsonResponse({'message':'successfully viewed','id':proj_list})
-        except Exception as e:
-            return JsonResponse({'error':f'viewed data{str(e)}'})
-    return JsonResponse({'error':'invalid request method'})
+    if request.method != "GET":
+        return JsonResponse({'error': 'invalid request method'}, status=405)
 
+    proj_list = []
+
+    for p in Projects.objects.all():
+        proj_list.append({
+            "id": p.id,
+            "Project_Name": p.Project_Name,
+            "Company_Name": p.Company_Name,
+            "Description": p.Description,
+            "Assigned_to": [u.name for u in p.Assigned_to.all()],
+            "Due_Date": p.Due_Date,
+            "Est_Hour": p.Est_Hour,
+            "Priority": p.Priority,
+            "Links": p.Links,
+            "Status": p.Status
+        })
+
+    return JsonResponse({'message': 'success', 'id': proj_list}, safe=False)
 @csrf_exempt
 def update_projects(request,id):
     proj = get_object_or_404(Projects,id=id)
@@ -292,6 +331,54 @@ def update_projects(request,id):
             return JsonResponse({'error':f'updated field{str(e)}'})
     return JsonResponse({'error':'invalid request method'})
 
+
+User = get_user_model()
+
+
+@csrf_exempt
+def update_projects(request, id):
+    proj = get_object_or_404(Projects, id=id)
+
+    if request.method == 'GET':
+        return JsonResponse({
+            "Project_Name": proj.Project_Name,
+            "Company_Name": proj.Company_Name,
+            "Description": proj.Description,
+            "Assigned_to": [u.name for u in proj.Assigned_to.all()],
+            "Due_Date": proj.Due_Date,
+            "Est_Hour": proj.Est_Hour,
+            "Priority": proj.Priority,
+            "Links": proj.Links,
+            "Attachments": proj.Attachments,
+            "Status": proj.Status
+        })
+
+    elif request.method == "POST":
+        try:
+            proj.Project_Name = request.POST.get('project_name', proj.Project_Name)
+            proj.Company_Name = request.POST.get('company_name', proj.Company_Name)
+            proj.Description = request.POST.get('description', proj.Description)
+            proj.Due_Date = request.POST.get('due_date', proj.Due_Date)
+            proj.Est_Hour = request.POST.get('est_hr', proj.Est_Hour)
+            proj.Priority = request.POST.get('priority', proj.Priority)
+            proj.Links = request.POST.get('links', proj.Links)
+            proj.Attachments = request.POST.get('attachments', proj.Attachments)
+            proj.Status = request.POST.get('status', proj.Status)
+
+            assigned_names = request.POST.getlist('assigned_to')
+            users = User.objects.filter(name__in=assigned_names)
+            proj.Assigned_to.set(users)
+
+            proj.save()
+            return JsonResponse({'message': 'successfully updated', 'id': proj.id})
+
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=400)
+
+    return JsonResponse({'error': 'invalid request method'}, status=405)
+
+
+
 @csrf_exempt
 def Delete_Projects(request,id):
     if request.method=='DELETE':
@@ -332,6 +419,8 @@ def update_task_status(request):
     return JsonResponse({"status": "error", "message": "POST method required"}, status=400)
 
 
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def Start_Task(request):
@@ -358,6 +447,7 @@ def Start_Task(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
 
 @csrf_exempt
 @require_http_methods(["POST"])
@@ -412,9 +502,38 @@ def Task_Summary(request):
     return JsonResponse({"tasks":data})
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def View_Employees_Productivity(request):
+    try:
+        users = User.objects.all().values(
+            "id",
+            "first_name",
+            "email",
+            "role"
+        )
 
+        data = []
+        for u in users:
+            data.append({
+                "id": u["id"],
+                "name": u["first_name"],
+                "email": u["email"],
+                "role": u["role"],
 
+                # TEMP / derived values (until real tracking exists)
+                "time": "0hr 00m",
+                "efficiency": "8hr",
+                "percent": 0,
+            })
 
+        return JsonResponse({
+            "message": "success",
+            "users": data
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 

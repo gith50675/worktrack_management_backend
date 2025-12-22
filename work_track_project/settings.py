@@ -27,12 +27,16 @@ SECRET_KEY = 'django-insecure-xtf5(dg0e9zjd9t5%9(ardx3=8c(!+3_jg6-+s6ohlb^yc@uqt
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+AUTH_USER_MODEL = "work_track_admin.User"
+
+
 ALLOWED_HOSTS = ["localhost","127.0.0.1"]
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'work_track_admin',
     'corsheaders',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -40,7 +44,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'work_track_admin',
     'work_track_user',
     'rest_framework',
     'rest_framework_simplejwt',

@@ -7,3 +7,7 @@ psycopg2==2.9.10
 PyJWT==2.10.1
 sqlparse==0.5.3
 tzdata==2025.2
+
+PyAutoGUI~=0.9.54
+self~=2020.12.3
+requests~=2.32.5
