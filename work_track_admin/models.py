@@ -1,4 +1,6 @@
 from datetime import timedelta
+
+from django.conf import settings
 from django.contrib.auth.models import User, AbstractUser
 from django.utils import timezone
 from django.db import models
@@ -69,17 +71,50 @@ class Projects(models.Model):
 
 
 class Task_Time(models.Model):
-    Task = models.ForeignKey(Tasks, on_delete=models.CASCADE, related_name="sessions")
-    Start_Time = models.DateTimeField(default=timezone.now, null=True, blank=True)
+    Task = models.ForeignKey(
+        Tasks,
+        on_delete=models.CASCADE,
+        related_name="sessions"
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE
+    )
+
+    Start_Time = models.DateTimeField(default=timezone.now)
     End_Time = models.DateTimeField(null=True, blank=True)
     Duration = models.DurationField(null=True, blank=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["Task", "user"],
+                condition=models.Q(End_Time__isnull=True),
+                name="one_running_session_per_user_per_task"
+            )
+        ]
     def stop(self):
         if not self.End_Time:
             self.End_Time = timezone.now()
             self.Duration = self.End_Time - self.Start_Time
-            self.save()
+            self.save(update_fields=["End_Time", "Duration"])
             self.Task.Total_Time += self.Duration
-            self.Task.save()
+            self.Task.save(update_fields=["Total_Time"])
 
+    def __str__(self):
+        return f"{self.Task.Task_Name} - {self.user}"
+
+
+
+User = settings.AUTH_USER_MODEL
+
+class Notification(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    message = models.CharField(max_length=255)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user} - {self.message}"
 

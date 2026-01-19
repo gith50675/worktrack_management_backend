@@ -4,6 +4,7 @@ import time
 
 from django.contrib.auth import authenticate
 from django.contrib.auth.decorators import login_required
+from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import datetime
 import pyautogui
@@ -16,8 +17,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods, require_GET
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework import status
 
-
+from datetime import datetime
+from .models import Tasks, Notification
 from .models import Projects, Task_Time
 from .models import Tasks
 from .models import User
@@ -80,30 +86,60 @@ def Signup(request):
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
 
-@csrf_exempt
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def Login(request):
     email = request.data.get("email")
     password = request.data.get("password")
+
     user = authenticate(username=email, password=password)
+
     if not user:
         return Response({"error": "Invalid email or password"}, status=401)
 
     if not user.is_active:
         return Response({"error": "Account disabled"}, status=403)
 
-    if user.is_superuser:
-        user.role = "admin"
-        user.save()
+    if user.role != "admin":
+        return Response({"error": "Admin access only"}, status=403)
+
     refresh = RefreshToken.for_user(user)
+
     return Response({
-        "message": "Login successful",
+        "message": "Admin login successful",
         "access": str(refresh.access_token),
         "refresh": str(refresh),
-        "role": user.role
+        "role": user.role,
     })
 
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def user_login(request):
+    email = request.data.get("email")
+    password = request.data.get("password")
+
+    user = authenticate(username=email, password=password)
+
+    if not user:
+        return Response({"error": "Invalid email or password"}, status=401)
+
+    if not user.is_active:
+        return Response({"error": "Account disabled"}, status=403)
+
+    if user.role == "admin":
+        return Response(
+            {"error": "Admins must use admin login"},
+            status=403
+        )
+
+    refresh = RefreshToken.for_user(user)
+
+    return Response({
+        "message": "User login successful",
+        "access": str(refresh.access_token),
+        "refresh": str(refresh),
+        "role": user.role,
+    })
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -194,48 +230,61 @@ from django.contrib.auth.models import User
 from django.contrib.auth import get_user_model
 User = get_user_model()
 
-
 @csrf_exempt
 def Add_Tasks(request):
-    if request.method == "POST":
+    if request.method != "POST":
+        return JsonResponse({"error": "Invalid request method"}, status=405)
+
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+
+        task_name = data.get("task_name")
+        priority = data.get("priority")
+        due_date = data.get("due_date")
+        status = data.get("status")
+        assigned_ids = data.get("assigned_to", [])
+        working_hours = data.get("working_hours", 0)
+        description = data.get("description", "")
+
+        if not (task_name and priority and due_date and assigned_ids):
+            return JsonResponse({"error": "Required fields missing"}, status=400)
+
         try:
-            task_name = request.POST.get("task-name")
-            priority = request.POST.get("priority")
-            due_date = request.POST.get("due-date")
-            status = request.POST.get("status")
-            assigned_ids = request.POST.getlist("assigned-to")
-            working_hours = request.POST.get("working-hours")
-            description = request.POST.get("description")
+            assigned_ids = [int(uid) for uid in assigned_ids]
+        except ValueError:
+            return JsonResponse({"error": "Invalid user IDs"}, status=400)
 
-            if not (task_name and priority and due_date and assigned_ids):
-                return JsonResponse({"error": "Required fields missing"}, status=400)
-            try:
-                assigned_ids = [int(uid) for uid in assigned_ids]
-            except ValueError:
-                return JsonResponse({"error": "Invalid user IDs"}, status=400)
+        due_date_obj = datetime.strptime(due_date, "%Y-%m-%d").date()
 
-            due_date_obj = datetime.strptime(due_date, "%Y-%m-%d").date()
+        task = Tasks.objects.create(
+            Task_Name=task_name,
+            Priority=priority,
+            Due_Date=due_date_obj,
+            Status=status,
+            Working_Hours=working_hours,
+            Description=description,
+        )
 
-            task = Tasks.objects.create(
-                Task_Name=task_name,
-                Priority=priority,
-                Due_Date=due_date_obj,
-                Status=status,
-                Working_Hours=working_hours or 0,
-                Description=description or "",
+        task.Assigned_to.set(assigned_ids)
+
+        for user_id in assigned_ids:
+            Notification.objects.create(
+                user_id=user_id,
+                message=f"You have been assigned a new task: {task.Task_Name}",
             )
 
-            task.Assigned_to.set(assigned_ids)
+        return JsonResponse(
+            {"message": "Task successfully added", "task_id": task.id},
+            status=201,
+        )
 
-            return JsonResponse(
-                {"message": "Task successfully added", "task_id": task.id},
-                status=201,
-            )
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
-    return JsonResponse({"error": "Invalid request method"}, status=405)
+
 
 from django.http import JsonResponse
 from django.db.models import Q
@@ -288,6 +337,53 @@ def View_Tasks(request):
             return JsonResponse({"error": str(e)}, status=500)
 
     return JsonResponse({"error": "Invalid request method"}, status=405)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def View_User_Tasks(request):
+    try:
+        query = request.GET.get("search", "")
+
+        # 🔐 ONLY TASKS ASSIGNED TO THE LOGGED-IN USER
+        tasks = Tasks.objects.filter(
+            Assigned_to=request.user
+        ).order_by("-id")
+
+        if query:
+            tasks = tasks.filter(
+                Q(Task_Name__icontains=query) |
+                Q(Priority__icontains=query) |
+                Q(Status__icontains=query) |
+                Q(Description__icontains=query)
+            )
+
+        task_list = []
+        for t in tasks:
+            task_list.append({
+                "id": t.id,
+                "task_name": t.Task_Name,
+                "priority": t.Priority,
+                "due_date": t.Due_Date.strftime("%Y-%m-%d") if t.Due_Date else "",
+                "start_date": "",
+                "status": t.Status,
+                "assigned_to": list(
+                    t.Assigned_to.values("id", "first_name", "last_name", "email")
+                ),
+                "working_hours": t.Working_Hours,
+                "description": t.Description,
+            })
+
+        return JsonResponse(
+            {
+                "count": len(task_list),
+                "tasks": task_list,
+            },
+            status=200,
+        )
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 
 
@@ -401,15 +497,63 @@ def total_tasks(request):
         "total_tasks": total_tasks
     })
 
-def total_tasks_by_users(request, username):
-    total_task = Tasks.objects.filter(
-        Assigned_By__iexact=username
-    ).count()
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def total_projects_by_user(request):
+    # Filters projects where the logged-in user is assigned
+    count = Projects.objects.filter(Assigned_to=request.user).count()
+    return JsonResponse({"total_projects": count})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def total_tasks_summary(request):
+    # Get tasks assigned to the logged-in user
+    user_tasks = Tasks.objects.filter(Assigned_to=request.user)
+
+    total = user_tasks.count()
+    completed = user_tasks.filter(Status__iexact="Completed").count()
+    unfinished = total - completed
 
     return JsonResponse({
-        "employee": username,
-        "total_tasks": total_task
+        "total_tasks": total,
+        "completed_tasks": completed,
+        "unfinished_tasks": unfinished
     })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def admin_dashboard_summary(request):
+    # Optional: enforce admin role
+    if request.user.role != "admin":
+        return JsonResponse({"error": "Unauthorized"}, status=403)
+
+    total_projects = Projects.objects.count()
+    total_tasks = Tasks.objects.count()
+    completed_tasks = Tasks.objects.filter(Status__iexact="Completed").count()
+    active_tasks = total_tasks - completed_tasks
+    active_members = User.objects.filter(is_active=True).count()
+
+    return JsonResponse({
+        "total_projects": total_projects,
+        "total_tasks": total_tasks,
+        "active_tasks": active_tasks,
+        "completed_tasks": completed_tasks,
+        "active_members": active_members,
+    }, status=200)
+
+
+# def total_tasks_by_users(request, username):
+#     total_task = Tasks.objects.filter(
+#         Assigned_By__iexact=username
+#     ).count()
+#
+#     return JsonResponse({
+#         "employee": username,
+#         "total_tasks": total_task
+#     })
 
 
 @csrf_exempt
@@ -450,6 +594,8 @@ def Add_Projects(request):
 
         project.Assigned_to.add(user)
         # ------------------------------------
+        print("ASSIGNED_ID:", assigned_id, type(assigned_id))
+        print("USERS IN DB:", list(User.objects.values_list("id", flat=True)))
 
         return JsonResponse({
             'message': 'Project added successfully',
@@ -535,6 +681,8 @@ def View_Single_Project(request, project_id):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+
 @csrf_exempt
 def update_projects(request, id):
     proj = get_object_or_404(Projects, id=id)
@@ -613,15 +761,15 @@ def total_projects(request):
         "total_projects": total
     })
 
-def total_projects_by_user(request, username):
-    total = Projects.objects.filter(
-        Assigned_to__name__iexact=username
-    ).count()
-
-    return JsonResponse({
-        "user": username,
-        "total_projects": total
-    })
+# def total_projects_by_user(request, username):
+#     total = Projects.objects.filter(
+#         Assigned_to__name__iexact=username
+#     ).count()
+#
+#     return JsonResponse({
+#         "user": username,
+#         "total_projects": total
+#     })
 
 
 @csrf_exempt
@@ -653,75 +801,160 @@ def update_task_status(request):
     return JsonResponse({"status": "error", "message": "POST method required"}, status=400)
 
 
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def Update_Task_Status(request, task_id):
+    if request.user.role != "admin":
+        return JsonResponse({"error": "Unauthorized"}, status=403)
+
+    status = request.data.get("status")
+
+    if status not in ["Pending", "In Progress", "Completed"]:
+        return JsonResponse({"error": "Invalid status"}, status=400)
+
+    task = Tasks.objects.filter(id=task_id).first()
+    if not task:
+        return JsonResponse({"error": "Task not found"}, status=404)
+
+    task.Status = status
+    task.save()
+
+    return JsonResponse({"message": "Status updated",
+                         "status":task.Status}, status=200)
 
 
-@csrf_exempt
-@require_http_methods(["POST"])
-def Start_Task(request):
-    try:
-        data = json.loads(request.body)
-        task_name = data.get('name')
-        if not task_name:
-            return JsonResponse({"error": "Task name is required"}, status=400)
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def kanban_tasks(request):
+    if request.user.role != "admin":
+        return JsonResponse({"error": "Unauthorized"}, status=403)
 
-        # Get or create the task
-        task, created = Tasks.objects.get_or_create(Task_Name=task_name)
-
-        # Check if there’s already a running session
-        if Task_Time.objects.filter(Task=task, End_Time__isnull=True).exists():
-            return JsonResponse({"error": "Task already running"}, status=400)
-
-        # Create new session with Start_Time set automatically
-        Task_Time.objects.create(Task=task, Start_Time=timezone.now())
-
-        return JsonResponse({
-            "message": f"Started task '{task.Task_Name}'",
-            "task_id": task.id
-        }, status=201)
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
-
-@csrf_exempt
-@require_http_methods(["POST"])
-def Stop_Task(request):
-    try:
-        data = json.loads(request.body)
-        task_name = data.get('name')
-        if not task_name:
-            return JsonResponse({"error": "Task name is required"}, status=400)
-
-        # Get the task
-        try:
-            task = Tasks.objects.get(Task_Name=task_name)
-        except Tasks.DoesNotExist:
-            return JsonResponse({"error": "Task not found"}, status=404)
-
-        # Find active session
-        try:
-            session = Task_Time.objects.filter(Task=task, End_Time__isnull=True).latest("Start_Time")
-        except Task_Time.DoesNotExist:
-            return JsonResponse({"error": "No active session found"}, status=400)
-
-        # Stop session
-        session.End_Time = timezone.now()
-        session.Duration = session.End_Time - session.Start_Time
-        session.save()
-
-        # Add duration to total task time
-        task.Total_Time += session.Duration
-        task.save()
-
-        return JsonResponse({
-            "message": f"Stopped task '{task.Task_Name}'",
-            "session_duration": str(session.Duration),
-            "total_duration": str(task.Total_Time)
+    tasks = Tasks.objects.prefetch_related("Assigned_to")
+    data = []
+    for task in tasks:
+        data.append({
+            "id": task.id,
+            "task_name": task.Task_Name,
+            "status": task.Status,
+            "priority": task.Priority,
+            "assigned_to": [
+                u.first_name or u.email for u in task.Assigned_to.all()
+            ],
         })
+    return JsonResponse(data, safe=False, status=200)
 
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def start_task(request, task_id):
+
+    try:
+        task = Tasks.objects.get(id=task_id)
+    except Tasks.DoesNotExist:
+        return Response(
+            {"error": "Task not found"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if Task_Time.objects.filter(
+        Task=task,
+        user=request.user,
+        End_Time__isnull=True
+    ).exists():
+        return Response(
+            {"error": "Task already running"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    Task_Time.objects.create(
+        Task=task,
+        user=request.user
+    )
+
+    return Response(
+        {"message": "Task started"},
+        status=status.HTTP_201_CREATED
+    )
+
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def stop_task(request, task_id):
+
+    session = Task_Time.objects.filter(
+        Task_id=task_id,
+        user=request.user,
+        End_Time__isnull=True
+    ).first()
+
+    if not session:
+        return Response(
+            {"error": "No running task"},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    session.stop()
+
+    return Response(
+        {
+            "message": "Task stopped",
+            "duration_seconds": int(session.Duration.total_seconds())
+        },
+        status=status.HTTP_200_OK
+    )
+
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from django.utils import timezone
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_running_task_session(request, task_id):
+    session = Task_Time.objects.filter(
+        Task_id=task_id,
+        user=request.user,
+        End_Time__isnull=True
+    ).first()
+
+    if not session:
+        return Response({"running": False})
+
+    elapsed_seconds = int(
+        (timezone.now() - session.Start_Time).total_seconds()
+    )
+
+    return Response({
+        "running": True,
+        "start_time": session.Start_Time,
+        "elapsed_seconds": elapsed_seconds
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def get_active_task(request):
+    session = Task_Time.objects.filter(
+        user=request.user,
+        End_Time__isnull=True
+    ).first()
+
+    if not session:
+        return Response({"running": False})
+
+    elapsed_seconds = int(
+        (timezone.now() - session.Start_Time).total_seconds()
+    )
+
+    return Response({
+        "running": True,
+        "task_id": session.Task_id,
+        "elapsed_seconds": elapsed_seconds
+    })
+
 
 @require_http_methods(["GET"])
 def Task_Summary(request):
@@ -847,229 +1080,322 @@ def View_Single_Employee_Productivity(request, user_id):
         return Response({"status": False, "error": str(e)}, status=500)
 
 
-#Screenshot and application detective
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def employee_status_summary(request):
+    user = request.user
+    today = timezone.now().date()
+
+    active_projects = Projects.objects.filter(
+        Assigned_to=user,
+        Status="In Progress"
+    ).count()
+
+    task_in_progress = Tasks.objects.filter(
+        Assigned_to=user,
+        Status="In Progress"
+    ).count()
+
+    completed_tasks = Tasks.objects.filter(
+        Assigned_to=user,
+        Status="Task Done"
+    ).count()
+
+    today_sessions = Task_Time.objects.filter(
+        user=user,
+        Start_Time__date=today
+    )
+
+    worked_seconds = sum(
+        [(s.Duration or timedelta()).total_seconds() for s in today_sessions]
+    )
+
+    idle_seconds = max(0, 8 * 3600 - worked_seconds)  # assuming 8h workday
+
+    return Response({
+        "active_projects": active_projects,
+        "task_in_progress": task_in_progress,
+        "completed_tasks": completed_tasks,
+        "idle_time_minutes": int(idle_seconds // 60),
+    })
 
 
-# ==========================
-# CONFIGURATION
-# ==========================
+# #Screenshot and application detective
+#
+#
+# # ==========================
+# # CONFIGURATION
+# # ==========================
+#
+# SCREENSHOT_INTERVAL_MIN = 30
+# INACTIVITY_THRESHOLD_MIN = 5
+# ACTIVE_APP_CHECK_SEC = 5
+#
+# BLACKLISTED_KEYWORDS = [
+#     "youtube",
+#     "spotify",
+#     "netflix",
+#     "prime video",
+#     "hotstar"
+# ]
+#
+# BASE_SCREENSHOT_DIR  = "screenshots"
+# USER = os.getlogin()
+# OS_NAME = platform.system()
+#
+# # ==========================
+# # UTILITIES
+# # ==========================
+#
+# def ensure_directory(path):
+#     os.makedirs(path, exist_ok=True)
+#
+# def current_timestamp():
+#     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+#
+# def today_directory():
+#     return os.path.join(BASE_SCREENSHOT_DIR , USER, datetime.now().strftime("%Y-%m-%d"))
+#
+# # ==========================
+# # SCREENSHOT MANAGER
+# # ==========================
+#
+# class ScreenshotManager:
+#     @staticmethod
+#     def capture(reason):
+#         try:
+#             directory = today_directory()
+#             ensure_directory(directory)
+#             filename = f"{current_timestamp()}_{reason}.png"
+#             pyautogui.screenshot(os.path.join(directory, filename))
+#         except Exception:
+#             pass  # silent failure
+#
+# # ==========================
+# # ACTIVITY TRACKER
+# # ==========================
+#
+# class ActivityTracker:
+#     def init(self):
+#         self.last_activity = datetime.now()
+#         self.lock = threading.Lock()
+#
+#     def update(self):
+#         with self.lock:
+#             self.last_activity = datetime.now()
+#
+#     def inactive_for(self):
+#         with self.lock:
+#             return datetime.now() - self.last_activity
+#
+#     def start(self):
+#         mouse.Listener(
+#             on_move=lambda *a: self.update(),
+#             on_click=lambda *a: self.update(),
+#             on_scroll=lambda *a: self.update()
+#         ).start()
+#
+#         keyboard.Listener(
+#             on_press=lambda *a: self.update(),
+#             on_release=lambda *a: self.update()
+#         ).start()
+#
+# # ==========================
+# # ACTIVE WINDOW DETECTION
+# # ==========================
+#
+# class ActiveWindowDetector:
+#
+#     @staticmethod
+#     def get_active_window_text():
+#         try:
+#             if OS_NAME == "Windows":
+#                 import win32gui, win32process
+#                 hwnd = win32gui.GetForegroundWindow()
+#                 _, pid = win32process.GetWindowThreadProcessId(hwnd)
+#                 proc = psutil.Process(pid)
+#                 return f"{proc.name()} {win32gui.GetWindowText(hwnd)}".lower()
+#
+#             elif OS_NAME == "Darwin":  # macOS
+#                 from AppKit import NSWorkspace
+#                 app = NSWorkspace.sharedWorkspace().frontmostApplication()
+#                 return f"{app.localizedName()}".lower()
+#
+#             elif OS_NAME == "Linux":
+#                 result = subprocess.check_output(["wmctrl", "-lp"])
+#                 active = subprocess.check_output(["xdotool", "getwindowfocus", "getwindowpid"]).decode().strip()
+#                 for line in result.decode().splitlines():
+#                     if active in line:
+#                         return line.lower()
+#                 return ""
+#
+#         except Exception:
+#             return ""
+#
+#     @staticmethod
+#     def is_blacklisted(text):
+#         return any(word in text for word in BLACKLISTED_KEYWORDS)
+#
+# # ==========================
+# # CONTROLLER
+# # ==========================
+#
+# class MonitorController:
+#     def init(self):
+#         self.activity = ActivityTracker()
+#         self.last_interval = datetime.now()
+#         self.inactivity_shot_taken = False
+#
+#     def start(self):
+#         self.activity.start()
+#         threading.Thread(target=self.interval_loop, daemon=True).start()
+#         threading.Thread(target=self.inactivity_loop, daemon=True).start()
+#         threading.Thread(target=self.app_monitor_loop, daemon=True).start()
+#
+#         while True:
+#             time.sleep(60)
+#
+#     def _interval_screenshot_loop(self):
+#         while True:
+#             if datetime.now() - self.last_interval >= timedelta(minutes=SCREENSHOT_INTERVAL_MIN):
+#                 ScreenshotManager.capture("interval")
+#                 self.last_interval = datetime.now()
+#             time.sleep(30)
+#
+#     def _inactivity_monitor_loop(self):
+#         while True:
+#             if self.activity.inactive_for() >= timedelta(minutes=INACTIVITY_THRESHOLD_MIN):
+#                 if not self.inactivity_shot_taken:
+#                     ScreenshotManager.capture("inactivity")
+#                     self.inactivity_shot_taken = True
+#             else:
+#                 self.inactivity_shot_taken = False
+#             time.sleep(10)
+#
+#     def _application_monitor_loop(self):
+#         last_state = False
+#         while True:
+#             text = ActiveWindowDetector.get_active_window_text()
+#             blacklisted = ActiveWindowDetector.is_blacklisted(text)
+#             if blacklisted and not last_state:
+#                 ScreenshotManager.capture("blacklisted")
+#             last_state = blacklisted
+#             time.sleep(ACTIVE_APP_CHECK_SEC)
+#
+#
+# # ==========================
+# # ENTRY POINT
+# # ==========================
+#
+# if __name__ == "__main__":
+#     MonitorController().start()
+#
+#
+# @csrf_exempt
+# def upload_screenshot(request):
+#     if request.method != "POST":
+#         return JsonResponse({"error": "POST only"}, status=405)
+#
+#     try:
+#         image_base64 = request.POST.get("image")
+#         reason = request.POST.get("reason", "unknown")
+#         username = request.POST.get("username", "anonymous")
+#
+#         if not image_base64:
+#             return JsonResponse({"error": "Image required"}, status=400)
+#
+#         image_data = base64.b64decode(image_base64)
+#
+#         folder = f"media/screenshots/{username}"
+#         os.makedirs(folder, exist_ok=True)
+#
+#         filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{reason}.png"
+#         filepath = os.path.join(folder, filename)
+#
+#         with open(filepath, "wb") as f:
+#             f.write(image_data)
+#
+#         return JsonResponse({"status": "success"})
+#
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)
+#
+#
+# import base64
+# import requests
+# from io import BytesIO
+#
+# DJANGO_API_URL = "http://127.0.0.1:8000/api/upload-screenshot/"
+#
+#
+# def send_screenshot_to_server(reason):
+#     try:
+#         screenshot = pyautogui.screenshot()
+#         buffer = BytesIO()
+#         screenshot.save(buffer, format="PNG")
+#
+#         encoded_image = base64.b64encode(buffer.getvalue()).decode()
+#
+#         payload = {
+#             "image": encoded_image,
+#             "reason": reason,
+#             "username": USER
+#         }
+#
+#         requests.post(DJANGO_API_URL, data=payload, timeout=5)
+#
+#     except Exception:
+#         pass
+# SCREENSHOT_INTERVAL_SEC = 60  # 1 minute
+#
+# def is_task_running(task_id):
+#     try:
+#         res = requests.get(
+#             f"http://127.0.0.1:8000/tasks/{task_id}/running/",
+#             headers={"Authorization": f"Bearer {ACCESS_TOKEN}"},
+#             timeout=3
+#         )
+#         return res.json().get("running", False)
+#     except Exception:
+#         return False
+#
+#
+# def screenshot_loop(task_id):
+#     while True:
+#         if is_task_running(task_id):
+#             send_screenshot_to_server("interval")
+#             time.sleep(SCREENSHOT_INTERVAL_SEC)
+#         else:
+#             time.sleep(5)  # check again
 
-SCREENSHOT_INTERVAL_MIN = 30
-INACTIVITY_THRESHOLD_MIN = 5
-ACTIVE_APP_CHECK_SEC = 5
-
-BLACKLISTED_KEYWORDS = [
-    "youtube",
-    "spotify",
-    "netflix",
-    "prime video",
-    "hotstar"
-]
-
-BASE_SCREENSHOT_DIR  = "screenshots"
-USER = os.getlogin()
-OS_NAME = platform.system()
-
-# ==========================
-# UTILITIES
-# ==========================
-
-def ensure_directory(path):
-    os.makedirs(path, exist_ok=True)
-
-def current_timestamp():
-    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-def today_directory():
-    return os.path.join(BASE_SCREENSHOT_DIR , USER, datetime.now().strftime("%Y-%m-%d"))
-
-# ==========================
-# SCREENSHOT MANAGER
-# ==========================
-
-class ScreenshotManager:
-    @staticmethod
-    def capture(reason):
-        try:
-            directory = today_directory()
-            ensure_directory(directory)
-            filename = f"{current_timestamp()}_{reason}.png"
-            pyautogui.screenshot(os.path.join(directory, filename))
-        except Exception:
-            pass  # silent failure
-
-# ==========================
-# ACTIVITY TRACKER
-# ==========================
-
-class ActivityTracker:
-    def init(self):
-        self.last_activity = datetime.now()
-        self.lock = threading.Lock()
-
-    def update(self):
-        with self.lock:
-            self.last_activity = datetime.now()
-
-    def inactive_for(self):
-        with self.lock:
-            return datetime.now() - self.last_activity
-
-    def start(self):
-        mouse.Listener(
-            on_move=lambda *a: self.update(),
-            on_click=lambda *a: self.update(),
-            on_scroll=lambda *a: self.update()
-        ).start()
-
-        keyboard.Listener(
-            on_press=lambda *a: self.update(),
-            on_release=lambda *a: self.update()
-        ).start()
-
-# ==========================
-# ACTIVE WINDOW DETECTION
-# ==========================
-
-class ActiveWindowDetector:
-
-    @staticmethod
-    def get_active_window_text():
-        try:
-            if OS_NAME == "Windows":
-                import win32gui, win32process
-                hwnd = win32gui.GetForegroundWindow()
-                _, pid = win32process.GetWindowThreadProcessId(hwnd)
-                proc = psutil.Process(pid)
-                return f"{proc.name()} {win32gui.GetWindowText(hwnd)}".lower()
-
-            elif OS_NAME == "Darwin":  # macOS
-                from AppKit import NSWorkspace
-                app = NSWorkspace.sharedWorkspace().frontmostApplication()
-                return f"{app.localizedName()}".lower()
-
-            elif OS_NAME == "Linux":
-                result = subprocess.check_output(["wmctrl", "-lp"])
-                active = subprocess.check_output(["xdotool", "getwindowfocus", "getwindowpid"]).decode().strip()
-                for line in result.decode().splitlines():
-                    if active in line:
-                        return line.lower()
-                return ""
-
-        except Exception:
-            return ""
-
-    @staticmethod
-    def is_blacklisted(text):
-        return any(word in text for word in BLACKLISTED_KEYWORDS)
-
-# ==========================
-# CONTROLLER
-# ==========================
-
-class MonitorController:
-    def init(self):
-        self.activity = ActivityTracker()
-        self.last_interval = datetime.now()
-        self.inactivity_shot_taken = False
-
-    def start(self):
-        self.activity.start()
-        threading.Thread(target=self.interval_loop, daemon=True).start()
-        threading.Thread(target=self.inactivity_loop, daemon=True).start()
-        threading.Thread(target=self.app_monitor_loop, daemon=True).start()
-
-        while True:
-            time.sleep(60)
-
-    def _interval_screenshot_loop(self):
-        while True:
-            if datetime.now() - self.last_interval >= timedelta(minutes=SCREENSHOT_INTERVAL_MIN):
-                ScreenshotManager.capture("interval")
-                self.last_interval = datetime.now()
-            time.sleep(30)
-
-    def _inactivity_monitor_loop(self):
-        while True:
-            if self.activity.inactive_for() >= timedelta(minutes=INACTIVITY_THRESHOLD_MIN):
-                if not self.inactivity_shot_taken:
-                    ScreenshotManager.capture("inactivity")
-                    self.inactivity_shot_taken = True
-            else:
-                self.inactivity_shot_taken = False
-            time.sleep(10)
-
-    def _application_monitor_loop(self):
-        last_state = False
-        while True:
-            text = ActiveWindowDetector.get_active_window_text()
-            blacklisted = ActiveWindowDetector.is_blacklisted(text)
-            if blacklisted and not last_state:
-                ScreenshotManager.capture("blacklisted")
-            last_state = blacklisted
-            time.sleep(ACTIVE_APP_CHECK_SEC)
 
 
-# ==========================
-# ENTRY POINT
-# ==========================
-
-if __name__ == "__main__":
-    MonitorController().start()
-
-
+from rest_framework_simplejwt.authentication import JWTAuthentication
 @csrf_exempt
-def upload_screenshot(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "POST only"}, status=405)
+@require_GET
+def user_notifications(request):
+    jwt_auth = JWTAuthentication()
+    validated = jwt_auth.authenticate(request)
 
-    try:
-        image_base64 = request.POST.get("image")
-        reason = request.POST.get("reason", "unknown")
-        username = request.POST.get("username", "anonymous")
+    if validated is None:
+        return JsonResponse({"detail": "Authentication required"}, status=401)
 
-        if not image_base64:
-            return JsonResponse({"error": "Image required"}, status=400)
+    user, _ = validated
 
-        image_data = base64.b64decode(image_base64)
+    notifications = (
+        Notification.objects
+        .filter(user=user)
+        .order_by("-created_at")
+    )
 
-        folder = f"media/screenshots/{username}"
-        os.makedirs(folder, exist_ok=True)
-
-        filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{reason}.png"
-        filepath = os.path.join(folder, filename)
-
-        with open(filepath, "wb") as f:
-            f.write(image_data)
-
-        return JsonResponse({"status": "success"})
-
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
-import base64
-import requests
-from io import BytesIO
-
-DJANGO_API_URL = "http://127.0.0.1:8000/api/upload-screenshot/"
-
-
-def send_screenshot_to_server(reason):
-    try:
-        screenshot = pyautogui.screenshot()
-        buffer = BytesIO()
-        screenshot.save(buffer, format="PNG")
-
-        encoded_image = base64.b64encode(buffer.getvalue()).decode()
-
-        payload = {
-            "image": encoded_image,
-            "reason": reason,
-            "username": USER
+    data = [
+        {
+            "id": n.id,
+            "message": n.message,
+            "is_read": n.is_read,
+            "created_at": n.created_at.isoformat(),
         }
+        for n in notifications
+    ]
 
-        requests.post(DJANGO_API_URL, data=payload, timeout=5)
-
-    except Exception:
-        pass
+    return JsonResponse(data, safe=False, status=200)
