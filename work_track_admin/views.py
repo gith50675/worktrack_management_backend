@@ -37,7 +37,7 @@ import subprocess
 
 import pyautogui
 import psutil
-from pynput import mouse, keyboard
+
 
 
 import base64
