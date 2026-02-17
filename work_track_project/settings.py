@@ -33,7 +33,13 @@ DEBUG = True
 AUTH_USER_MODEL = "work_track_admin.User"
 
 
-ALLOWED_HOSTS = ["localhost","127.0.0.1"]
+ALLOWED_HOSTS = [
+    "localhost",
+    "127.0.0.1",
+    "worktrack-management-backend.onrender.com",
+    "worktrackmanagementuser.netlify.app",
+    "worktrackmanagmentadmin.netlify.app",
+]
 
 
 # Application definition
@@ -81,7 +87,8 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS=[
     "http://localhost:5173",
-    "http://localhost:5174"
+    "http://localhost:5174",  "https://worktrackmanagementuser.netlify.app",
+    "https://worktrackmanagmentadmin.netlify.app",
 
 ]
 
