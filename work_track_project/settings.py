@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'work_track_user',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
 ]
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -84,7 +85,7 @@ CORS_ALLOWED_ORIGINS=[
 CORS_ALLOW_CREDENTIALS= True
 
 CSRF_TRUSTED_ORIGINS=[
-    "http://localhost:5173"
+    "http://localhost:5173",
     "http://localhost:5174"
 ]
 
@@ -114,7 +115,7 @@ WSGI_APPLICATION = 'work_track_project.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'worktracker',
+        'NAME': 'worktrack1',
         'USER': 'postgres',
         'PASSWORD': 'admin',
         'PORT': 5432,
