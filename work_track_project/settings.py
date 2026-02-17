@@ -11,6 +11,9 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 from datetime import timedelta
 from pathlib import Path
+import os
+import dj_database_url
+
 
 from django.conf.global_settings import CSRF_TRUSTED_ORIGINS
 
@@ -115,13 +118,17 @@ WSGI_APPLICATION = 'work_track_project.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'worktrack1',
-        'USER': 'postgres',
-        'PASSWORD': 'admin',
-        'PORT': 5432,
-        'HOST':'localhost'
+        'NAME': 'worktrack_db_82qz',
+        'USER': 'worktrack_db_82qz_user',
+        'PASSWORD': 'YOUR_NEW_PASSWORD',
+        'HOST': 'dpg-d6a47fa48b3s73bfc4dg-a',
+        'PORT': '5432',
+        'OPTIONS': {
+            'sslmode': 'require',
+        },
     }
 }
+
 
 
 # Password validation
