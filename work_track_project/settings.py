@@ -77,6 +77,7 @@ SIMPLE_JWT = {
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -127,7 +128,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'worktrack_db_82qz',
         'USER': 'worktrack_db_82qz_user',
-        'PASSWORD': 'YOUR_NEW_PASSWORD',
+        'PASSWORD': 'TbHB2mKsjfSghpG0e0m9Xkksednb5dUp',
         'HOST': 'dpg-d6a47fa48b3s73bfc4dg-a',
         'PORT': '5432',
         'OPTIONS': {
