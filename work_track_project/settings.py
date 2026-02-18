@@ -28,7 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-xtf5(dg0e9zjd9t5%9(ardx3=8c(!+3_jg6-+s6ohlb^yc@uqt'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 AUTH_USER_MODEL = "work_track_admin.User"
 
