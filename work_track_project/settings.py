@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-xtf5(dg0e9zjd9t5%9(ardx3=8c(!+3_jg6-+s6ohlb^yc@uqt'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-xtf5(dg0e9zjd9t5%9(ardx3=8c(!+3_jg6-+s6ohlb^yc@uqt')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
@@ -124,18 +124,13 @@ WSGI_APPLICATION = 'work_track_project.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'worktrack_db_82qz',
-        'USER': 'worktrack_db_82qz_user',
-        'PASSWORD': 'TbHB2mKsjfSghpG0e0m9Xkksednb5dUp',
-        'HOST': 'dpg-d6a47fa48b3s73bfc4dg-a',
-        'PORT': '5432',
-        'OPTIONS': {
-            'sslmode': 'require',
-        },
-    }
+    'default': dj_database_url.config(
+        default=os.getenv('DATABASE_URL'),
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
 }
+
 
 
 
