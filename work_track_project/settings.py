@@ -125,7 +125,7 @@ WSGI_APPLICATION = 'work_track_project.wsgi.application'
 
 DATABASES = {
     'default': dj_database_url.config(
-        default=os.getenv('DATABASE_URL'),
+        default=os.getenv('postgresql://worktrack_db_82qz_user:TbHB2mKsjfSghpG0e0m9Xkksednb5dUp@dpg-d6a47fa48b3s73bfc4dg-a.oregon-postgres.render.com/worktrack_db_82qz'),
         conn_max_age=600,
         conn_health_checks=True,
     )
