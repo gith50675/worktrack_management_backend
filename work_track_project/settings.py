@@ -96,8 +96,9 @@ CORS_ALLOWED_ORIGINS=[
 CORS_ALLOW_CREDENTIALS= True
 
 CSRF_TRUSTED_ORIGINS=[
-    "http://localhost:5173",
-    "http://localhost:5174"
+    "https://worktrack-management-backend.onrender.com",
+    "https://worktrackmanagementuser.netlify.app",
+    "https://worktrackmanagmentadmin.netlify.app",
 ]
 
 ROOT_URLCONF = 'work_track_project.urls'
